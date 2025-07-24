@@ -1,0 +1,70 @@
+# Dépendances Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Logs de runtime
+logs
+*.log
+
+# Fichiers de couverture de tests
+coverage/
+.nyc_output
+
+# Dossier de build/production
+build/
+dist/
+
+# Variables d'environnement
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Cache
+.npm
+.eslintcache
+.cache/
+
+# Fichiers temporaires
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+terraform.tfvars
+*.tfplan
+
+# AWS
+.aws/
+
+# Docker
+docker-compose.override.yml
+
+# IDE/Editeurs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+*.pid
+*.seed
+*.pid.lock
+
+# Tests
+.jest/
+
+# Backup files
+*.bak
+*.backup

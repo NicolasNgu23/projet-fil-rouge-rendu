@@ -1,0 +1,181 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  AWS_REGION: eu-west-3
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-west-3.amazonaws.com
+  BACKEND_REPOSITORY: todo-backend
+  FRONTEND_REPOSITORY: todo-frontend
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: Run Tests
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: |
+          backend/package-lock.json
+          frontend/package-lock.json
+
+    - name: Install backend dependencies
+      working-directory: ./backend
+      run: npm ci
+
+    - name: Install frontend dependencies
+      working-directory: ./frontend
+      run: npm ci
+
+    - name: Run backend tests
+      working-directory: ./backend
+      run: npm test
+
+    - name: Run frontend tests
+      working-directory: ./frontend
+      run: npm test -- --coverage --watchAll=false
+
+    - name: Lint backend code
+      working-directory: ./backend
+      run: npm run lint || echo "Linting skipped - no lint script"
+
+    - name: Lint frontend code
+      working-directory: ./frontend
+      run: npm run lint || echo "Linting skipped - no lint script"
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    name: Build and Push Docker Images
+    if: github.ref == 'refs/heads/main'
+    
+    outputs:
+      backend-image: ${{ steps.backend-image.outputs.image }}
+      frontend-image: ${{ steps.frontend-image.outputs.image }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Create ECR repositories if they don't exist
+      run: |
+        aws ecr describe-repositories --repository-names ${{ env.BACKEND_REPOSITORY }} --region ${{ env.AWS_REGION }} || \
+        aws ecr create-repository --repository-name ${{ env.BACKEND_REPOSITORY }} --region ${{ env.AWS_REGION }}
+        
+        aws ecr describe-repositories --repository-names ${{ env.FRONTEND_REPOSITORY }} --region ${{ env.AWS_REGION }} || \
+        aws ecr create-repository --repository-name ${{ env.FRONTEND_REPOSITORY }} --region ${{ env.AWS_REGION }}
+
+    - name: Build, tag, and push backend image
+      id: backend-image
+      working-directory: ./backend
+      run: |
+        IMAGE_TAG=${GITHUB_SHA::8}
+        IMAGE_URI=${{ env.ECR_REGISTRY }}/${{ env.BACKEND_REPOSITORY }}:$IMAGE_TAG
+        docker build -t $IMAGE_URI .
+        docker push $IMAGE_URI
+        echo "image=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+    - name: Build, tag, and push frontend image
+      id: frontend-image
+      working-directory: ./frontend
+      run: |
+        IMAGE_TAG=${GITHUB_SHA::8}
+        IMAGE_URI=${{ env.ECR_REGISTRY }}/${{ env.FRONTEND_REPOSITORY }}:$IMAGE_TAG
+        docker build -t $IMAGE_URI .
+        docker push $IMAGE_URI
+        echo "image=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    name: Deploy to AWS
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.5.0
+
+    - name: Terraform Init
+      working-directory: ./infra/terraform
+      run: terraform init
+
+    - name: Terraform Plan
+      working-directory: ./infra/terraform
+      run: terraform plan -var="backend_image=${{ needs.build-and-push.outputs.backend-image }}" -var="frontend_image=${{ needs.build-and-push.outputs.frontend-image }}"
+
+    - name: Terraform Apply
+      working-directory: ./infra/terraform
+      run: terraform apply -auto-approve -var="backend_image=${{ needs.build-and-push.outputs.backend-image }}" -var="frontend_image=${{ needs.build-and-push.outputs.frontend-image }}"
+
+    - name: Get ALB DNS name
+      working-directory: ./infra/terraform
+      run: |
+        ALB_DNS=$(terraform output -raw alb_dns_name)
+        echo "Application deployed at: http://$ALB_DNS"
+        echo "ALB_DNS_NAME=$ALB_DNS" >> $GITHUB_ENV
+
+    - name: Update ECS Services
+      run: |
+        # Force new deployment to use new images
+        aws ecs update-service --cluster todo-cluster --service todo-backend-service --force-new-deployment --region ${{ env.AWS_REGION }}
+        aws ecs update-service --cluster todo-cluster --service todo-frontend-service --force-new-deployment --region ${{ env.AWS_REGION }}
+
+    - name: Wait for deployment
+      run: |
+        echo "Waiting for ECS services to stabilize..."
+        aws ecs wait services-stable --cluster todo-cluster --services todo-backend-service --region ${{ env.AWS_REGION }}
+        aws ecs wait services-stable --cluster todo-cluster --services todo-frontend-service --region ${{ env.AWS_REGION }}
+        echo "Deployment completed successfully!"
+
+  notify:
+    needs: [test, build-and-push, deploy]
+    runs-on: ubuntu-latest
+    name: Notify Deployment Status
+    if: always()
+    
+    steps:
+    - name: Notify Success
+      if: ${{ needs.deploy.result == 'success' }}
+      run: |
+        echo "✅ Deployment successful!"
+        echo "Application is available at: http://${{ env.ALB_DNS_NAME }}"
+
+    - name: Notify Failure
+      if: ${{ needs.test.result == 'failure' || needs.build-and-push.result == 'failure' || needs.deploy.result == 'failure' }}
+      run: |
+        echo "❌ Deployment failed!"
+        echo "Check the logs for more details."

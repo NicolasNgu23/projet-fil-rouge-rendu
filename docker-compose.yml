@@ -1,0 +1,112 @@
+version: '3.8'
+
+services:
+  # Service DynamoDB Local pour le développement
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: todo-dynamodb-local
+    ports:
+      - "8000:8000"
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-optimizeDbBeforeStartup", "-dbPath", "./data"]
+    volumes:
+      - dynamodb-data:/home/dynamodblocal/data
+    networks:
+      - todo-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Service Backend (API)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: todo-backend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - AWS_REGION=eu-west-3
+      - DYNAMODB_TABLE=todo-tasks
+      - DYNAMODB_ENDPOINT=http://dynamodb-local:8000
+      - AWS_ACCESS_KEY_ID=dummy
+      - AWS_SECRET_ACCESS_KEY=dummy
+    depends_on:
+      dynamodb-local:
+        condition: service_healthy
+    networks:
+      - todo-network
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Service Frontend (React)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: todo-frontend
+    ports:
+      - "3001:80"
+    environment:
+      - REACT_APP_API_URL=http://localhost:3000
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - todo-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Service pour initialiser DynamoDB avec la table todo-tasks
+  dynamodb-init:
+    image: amazon/aws-cli:latest
+    container_name: todo-dynamodb-init
+    environment:
+      - AWS_ACCESS_KEY_ID=dummy
+      - AWS_SECRET_ACCESS_KEY=dummy
+      - AWS_DEFAULT_REGION=eu-west-3
+    depends_on:
+      dynamodb-local:
+        condition: service_healthy
+    networks:
+      - todo-network
+    command: |
+      sh -c "
+        echo 'Waiting for DynamoDB to be ready...'
+        sleep 10
+        echo 'Creating todo-tasks table...'
+        aws dynamodb create-table \
+          --table-name todo-tasks \
+          --attribute-definitions \
+            AttributeName=id,AttributeType=S \
+          --key-schema \
+            AttributeName=id,KeyType=HASH \
+          --provisioned-throughput \
+            ReadCapacityUnits=5,WriteCapacityUnits=5 \
+          --endpoint-url http://dynamodb-local:8000 \
+          --region eu-west-3 || echo 'Table already exists'
+        echo 'DynamoDB initialization completed'
+      "
+    restart: "no"
+
+volumes:
+  dynamodb-data:
+    driver: local
+
+networks:
+  todo-network:
+    driver: bridge

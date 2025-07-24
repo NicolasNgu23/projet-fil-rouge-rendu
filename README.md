@@ -1,6 +1,78 @@
-##########################
-# main.tf
-##########################
+# Projet Fil Rouge : Architecture Cloud & DevOps
+
+## 📋 Vue d'ensemble
+
+Ce projet implémente une application web de gestion de tâches (Todo List) déployée sur AWS en utilisant les principes DevOps et l'Infrastructure as Code (IaC).
+
+### Architecture
+
+- **Frontend** : Application React moderne avec interface utilisateur responsive
+- **Backend** : API REST Node.js/Express
+- **Base de données** : Amazon DynamoDB (NoSQL managé)
+- **Infrastructure** : AWS ECS (Fargate) avec Application Load Balancer
+- **CI/CD** : GitHub Actions pour l'automatisation
+- **IaC** : Terraform pour la gestion de l'infrastructure
+
+## 🏗️ Architecture Technique
+
+```
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│   Utilisateur   │────▶│  Application     │────▶│   AWS Cloud     │
+│                 │     │  Load Balancer   │     │                 │
+└─────────────────┘     └──────────────────┘     └─────────────────┘
+                                 │
+                    ┌────────────┼────────────┐
+                    │            │            │
+            ┌───────▼───────┐    │    ┌───────▼───────┐
+            │   Frontend    │    │    │   Backend     │
+            │ (React/Nginx) │    │    │ (Node.js)     │
+            │  ECS Service  │    │    │ ECS Service   │
+            └───────────────┘    │    └───────┬───────┘
+                                 │            │
+                                 │    ┌───────▼───────┐
+                                 │    │   DynamoDB    │
+                                 │    │   (NoSQL)     │
+                                 │    └───────────────┘
+                    ┌────────────▼────────────┐
+                    │      Monitoring       │
+                    │    (CloudWatch)       │
+                    └───────────────────────┘
+```
+
+## 🚀 Démarrage Rapide
+
+### Prérequis
+
+- **Docker** et **Docker Compose**
+- **Node.js** 18+ (pour le développement local)
+- **Terraform** 1.5+ (pour le déploiement)
+- **AWS CLI** configuré
+- **Git**
+
+### Développement Local
+
+1. **Cloner le repository :**
+   ```bash
+   git clone <repository-url>
+   cd projet-fil-rouge
+   ```
+
+2. **Utiliser le script de développement :**
+   ```bash
+   # Vérifier les prérequis
+   ./scripts/dev.sh check
+   
+   # Installer les dépendances
+   ./scripts/dev.sh install
+   
+   # Démarrer l'environnement de développement
+   ./scripts/dev.sh start
+   ```
+
+3. **Accéder à l'application :**
+   - Frontend : http://localhost:3001
+   - Backend : http://localhost:3000
+   - Health check : http://localhost:3000/health
 terraform {
   backend "s3" {
     bucket         = "terraform-state-filrouge"
